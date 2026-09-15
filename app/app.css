@@ -251,3 +251,6 @@ td.dim .cell{opacity:.5}
 /* ---- offline / stale banner ---- */
 .banner{background:var(--warn-soft);color:var(--warn);padding:10px 16px;
   font-size:12.5px;line-height:1.45;border-bottom:1px solid var(--line)}
+
+/* ---- a refused action must look refused ---- */
+.ab-go:disabled,.ab-skip:disabled,.btn:disabled{opacity:.45;cursor:default}

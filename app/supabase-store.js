@@ -356,19 +356,24 @@
         }, { onConflict: 'team_id' })
       ]);
     } else if (op.op === 'slots') {
-      q = Promise.all([
+      var writes = [
         this.sb.from('game_players').upsert(
           (op.all || op.ids).map(function (id) {
             var i = op.ids.indexOf(id);
             return { game_id: op.gameId, player_id: id,
                      batting_slot: i >= 0 ? i : null };
-          }), { onConflict: 'game_id,player_id' }),
-        // Setting the order restarts the rotation — push that to everyone too.
-        this.sb.from('batting_state').upsert({
-          team_id: this.cfg.teamId, next_index: op.next || 0, next_player_id: op.nextId || null, game_id: op.gameId,
+          }), { onConflict: 'game_id,player_id' })
+      ];
+      // Only touch the team-wide pointer when this order owns it. `!== false`
+      // so ops queued by an older build still drain exactly as before.
+      if (op.pointer !== false) {
+        writes.push(this.sb.from('batting_state').upsert({
+          team_id: this.cfg.teamId, next_index: op.next || 0,
+          next_player_id: op.nextId || null, game_id: op.gameId,
           updated_at: new Date().toISOString()
-        }, { onConflict: 'team_id' })
-      ]);
+        }, { onConflict: 'team_id' }));
+      }
+      q = Promise.all(writes);
     } else if (op.op === 'cancatch') {
       q = this.sb.from('players').update({ can_catch: op.value }).eq('id', op.playerId);
     } else if (op.op === 'skip') {
@@ -426,13 +431,23 @@
     next();
   };
 
+  /* Drain once when the batch commits, not once per mutation inside it — and
+     in a finally, so a throwing body still flushes what it managed to queue. */
+  SB.prototype.batch = function (fn) {
+    try { Base.prototype.batch.call(this, fn); }
+    finally { if (!this.batching) this.drain(); }
+  };
+
   // Local write first, then flush. Overrides the base queue-only behaviour.
   ['setAssignment', 'setAttendance', 'markInningPlayed', 'advanceBatter',
-   'setBattingSlots', 'skipBatter', 'setCanCatch'].forEach(
+   'setBattingSlots', 'skipBatter', 'setCanCatch', 'clearCatcher'].forEach(
     function (fn) {
       SB.prototype[fn] = function () {
-        Base.prototype[fn].apply(this, arguments);
-        this.drain();
+        // Return the base result: several of these now report whether the write
+        // was allowed, and swallowing that would hide a refused batting move.
+        var r = Base.prototype[fn].apply(this, arguments);
+        if (!this.batching) this.drain();   // inside a batch, drain once at the end
+        return r;
       };
     });
 

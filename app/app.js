@@ -221,7 +221,15 @@
       return;
     }
     var i = batIndex(o);
-    $('#abSlot').textContent = 'Batter ' + (i + 1) + ' of ' + o.length + ' · At bat';
+    // Don't let the card invite a tap that would hijack the live game's batter.
+    var mine = S().battingGameId === gameId;
+    var locked = !mine && !store.canMoveBatting(gameId);
+    $('#abGo').disabled = $('#abSkip').disabled = locked;
+    if (locked) {
+      $('#abSlot').textContent = 'Another game is in progress — batting locked here';
+    } else {
+      $('#abSlot').textContent = 'Batter ' + (i + 1) + ' of ' + o.length + ' · At bat';
+    }
     $('#abName').textContent = o[i].name;
     $('#abDeck').textContent = o[(i + 1) % o.length].name;
     $('#abHole').textContent = o[(i + 2) % o.length].name;
@@ -252,11 +260,34 @@
     store.skipBatter(gameId, o[n].id, n);
   };
 
+  /* Has today's order actually moved yet? Before the first batter there is
+     nothing to hold on to, and starting at the top is exactly what lets a kid
+     who arrived late and is owed the most lead off. */
+  function battingUnderway() {
+    var pa = (S().plateAppearances || {})[gameId] || {};
+    for (var k in pa) { if (pa[k] > 0) return true; }
+    return S().battingGameId === gameId && (S().battingNext || 0) > 0;
+  }
+
+  /* Re-sorting rebuilds the ORDER, never the pointer. The kid in the box stays
+     in the box — on all three phones, since setBattingSlots pushes the pointer
+     into batting_state. Same rule as auto-fill: rebuild forward, leave what
+     already happened alone, and say so. */
   $('#setOrder').onclick = function () {
     if (!gameId) return;
+    var cur = order();
+    var upId = cur.length ? cur[batIndex(cur)].id : null;
     var o = E.battingOrderByNeed(S().players, presentIds(), store.battingStats(gameId));
-    store.setBattingSlots(gameId, o.map(function (p) { return p.id; }));
+    var ids = o.map(function (p) { return p.id; });
+    // Take who is up from order()+batIndex, not raw state: those already
+    // resolve the "the kid who was up is the one who left" case, and they
+    // return only present kids — the same set the sort works on.
+    var at = battingUnderway() ? ids.indexOf(upId) : -1;
+    store.setBattingSlots(gameId, ids, at < 0 ? 0 : at);
     renderAll();
+    if (at > -1) {
+      $('#orderMeta').textContent = 'Re-sorted — ' + nameOf(upId) + ' still up';
+    }
   };
 
   function renderOrderBox() {
@@ -372,7 +403,11 @@
         var b = el('button', i > Math.max(played, EXPECTED_INNINGS) ? 'ghost' : '',
                    'Inn ' + i);
         b.setAttribute('aria-pressed', i === inning);
-        b.onclick = function () { inning = i; renderField(); renderInnTabs(); };
+        // renderGameBtn too: this partial render never touched the Inning
+        // played button, so a stale "tap again" outlived the tab switch.
+        b.onclick = function () {
+          inning = i; renderGameBtn(); renderField(); renderInnTabs();
+        };
         w.appendChild(b);
       }(i));
     }
@@ -402,11 +437,12 @@
     var g = game();
     var b = $('#startGame');
     if (!g) return;
-    if (!armShort) {
-      var open = openSpots();
-      $('#inningDone').textContent = open ? 'Inning played (' + open + ' open)'
-                                          : 'Inning played';
-    }
+    // Derive the label from state on every render, rather than writing it once
+    // in the handler and suppressing later updates — that is how a stale
+    // "tap again" survived a context switch and described the wrong inning.
+    var d = $('#inningDone');
+    d.textContent = doneLabel();
+    d.className = 'btn' + (armedFor === armKey() ? ' primary' : '');
     b.textContent = g.status === 'live' ? 'End game'
                   : g.status === 'final' ? 'Game over' : 'Start game';
     b.className = 'btn' + (g.status === 'scheduled' ? ' primary' : '');
@@ -416,7 +452,32 @@
   /* Marking an inning played writes it into the season ledger permanently. If
      spots are open — which is what a kid leaving mid-inning leaves behind — it
      records a short inning and nothing says so. Make it a deliberate second tap. */
-  var armShort = false, armTimer = null;
+  /* The arm belongs to ONE inning of ONE game, not to the app. A bare boolean
+     stayed armed across a game switch or an inning-tab tap, so the next tap
+     marked the WRONG inning played with no confirmation — and nothing in the
+     app can un-mark one. Keying it to game+inning invalidates it automatically,
+     so no future context switch has to remember to clear it. */
+  var armedFor = null, armTimer = null;
+  function armKey() { return gameId + ':' + inning; }
+  function inningPlayed(i) {
+    return !!((S().actuals || {})[gameId] || {})[i];
+  }
+
+  /* Naming the inning on the button is the point: marking one played is
+     irreversible, so the coach should be able to read what is about to happen
+     rather than trust that the selection is where they left it. */
+  function doneLabel() {
+    if (inningPlayed(inning)) return 'Inning ' + inning + ' recorded';
+    var open = openSpots();
+    if (armedFor === armKey()) {
+      return open
+        ? 'Inning ' + inning + ' · ' + open + ' open — tap again'
+        : 'Mark inning ' + inning + ' played — tap again';
+    }
+    return open
+      ? 'Inning ' + inning + ' played (' + open + ' open)'
+      : 'Inning ' + inning + ' played';
+  }
 
   function openSpots() {
     var L = lineupFor(inning), open = 0;
@@ -430,16 +491,19 @@
   $('#inningDone').onclick = function () {
     var g = game();
     if (!g) return;
-    var open = openSpots();
-    if (open && !armShort) {
-      armShort = true;
-      $('#inningDone').textContent =
-        open + (open > 1 ? ' spots open' : ' spot open') + ' — tap again';
+    if (inningPlayed(inning)) return;        // already recorded; nothing to add
+
+    // EVERY mark takes two taps now, not just the short ones. Marking played
+    // advances the selected inning, so the button immediately re-aims at the
+    // next one — a double tap used to record two innings, irreversibly.
+    if (armedFor !== armKey()) {
+      armedFor = armKey();
+      renderGameBtn();
       clearTimeout(armTimer);
-      armTimer = setTimeout(function () { armShort = false; renderAll(); }, 6000);
+      armTimer = setTimeout(function () { armedFor = null; renderGameBtn(); }, 6000);
       return;
     }
-    armShort = false;
+    armedFor = null;
     clearTimeout(armTimer);
     store.markInningPlayed(gameId, inning);
     var n = Math.max(g.inningsPlayed || 0, inning);
@@ -455,6 +519,10 @@
   function setCatcher(v) {
     var g = game();
     if (!g) return;
+    // Vacate BEFORE the flag flips, while C is still a real row. If the phone
+    // dies between the two writes this leaves "cleared but still on" — an open
+    // C the coach can see and refill. The other order leaves the ghost.
+    if (!v) store.clearCatcher(gameId);
     store.patchGame(gameId, { local: { hasCatcher: v }, remote: { has_catcher: v } });
     renderAll();
   }
@@ -565,9 +633,13 @@
 
   $('#clearPlan').onclick = function () {
     if (!gameId) return;
-    for (var i = firstUnplayedInning(); i <= maxInnings(); i++) {
-      positions().forEach(function (pos) { store.setAssignment(gameId, i, pos, null); });
-    }
+    store.batch(function () {
+      for (var i = firstUnplayedInning(); i <= maxInnings(); i++) {
+        positions().forEach(function (pos) {
+          store.setAssignment(gameId, i, pos, null);
+        });
+      }
+    });
     renderAll();
   };
 

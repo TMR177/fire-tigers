@@ -71,7 +71,24 @@
     });
   };
 
+  /* Group a burst of mutations into ONE serialise and ONE render. Auto-fill
+     writes ten positions across up to seven innings; each write was
+     JSON-serialising the whole state to localStorage and triggering a full
+     re-render, so 50-130 of them ran back to back and visibly froze the phone.
+
+     The body must be SYNCHRONOUS: JavaScript runs it to completion with no
+     yield point, so nothing can tear the tab down between two writes — one
+     persist at the end is exactly as durable as fifty. Every op is still
+     pushed onto pendingOps as it happens, so the queue guarantee is untouched,
+     and finally{} commits whatever landed even if the body throws. */
+  LocalStore.prototype.batch = function (fn) {
+    if (this.batching) { fn(); return; }   // a nested batch joins the outer one
+    this.batching = true;
+    try { fn(); } finally { this.batching = false; this.persist(); }
+  };
+
   LocalStore.prototype.persist = function () {
+    if (this.batching) return;             // the batch commits once, at the end
     this.state.updatedAt = now();
     try {
       localStorage.setItem(KEY, JSON.stringify(this.state));
@@ -154,10 +171,12 @@
 
   LocalStore.prototype.applyPlan = function (gameId, plan, fromInning) {
     var start = fromInning || 1, self = this;
-    plan.grid.forEach(function (row, i) {
-      var inning = start + i;
-      plan.positions.forEach(function (pos) {
-        self.setAssignment(gameId, inning, pos, row[pos]);
+    this.batch(function () {
+      plan.grid.forEach(function (row, i) {
+        var inning = start + i;
+        plan.positions.forEach(function (pos) {
+          self.setAssignment(gameId, inning, pos, row[pos]);
+        });
       });
     });
   };
@@ -170,7 +189,28 @@
     this.persist();
   };
 
+  /* The batting pointer is TEAM-wide — one batting_state row shared by all three
+     phones — while gameId is whatever game is on SCREEN. Tapping a batter button
+     while looking at next week's fixture used to move the whole team's "who is
+     up" to a game nobody is playing, wiping the live game's position everywhere.
+     The pointer may move only when it is unclaimed, already this game's, this is
+     the game being played, or the game holding it is over / never really began. */
+  LocalStore.prototype.canMoveBatting = function (gameId) {
+    var S = this.state, held = S.battingGameId;
+    if (!held || held === gameId) return true;
+    var by = {};
+    S.games.forEach(function (g) { by[g.id] = g; });
+    if (by[gameId] && by[gameId].status === 'live') return true;
+    var h = by[held];
+    if (!h || h.status === 'final') return true;
+    if (h.status === 'live') return false;
+    return !Object.keys(S.actuals[held] || {}).length &&
+           !Object.keys(S.plateAppearances[held] || {}).length;
+  };
+
   LocalStore.prototype.advanceBatter = function (gameId, playerId, nextId, nextIndex) {
+    // Before the at-bat is recorded, or a refused tap credits a phantom one.
+    if (!this.canMoveBatting(gameId)) return false;
     var pa = this.state.plateAppearances;
     pa[gameId] = pa[gameId] || {};
     pa[gameId][playerId] = (pa[gameId][playerId] || 0) + 1;
@@ -181,6 +221,7 @@
                  pa: pa[gameId][playerId], next: this.state.battingNext,
                  nextId: this.state.battingNextId });
     this.persist();
+    return true;
   };
 
   /* Freeze today's batting order. It must be frozen, not recomputed live —
@@ -192,18 +233,27 @@
   LocalStore.prototype.setBattingSlots = function (gameId, orderedIds, startIndex) {
     var at = startIndex || 0, map = {};
     orderedIds.forEach(function (id, i) { map[id] = i; });
+    // Per-game slots are game-scoped and legitimately pre-filled for next week,
+    // so always write those; only the three team-global pointer lines are gated.
     this.state.battingSlots[gameId] = map;
-    this.state.battingGameId = gameId;
-    this.state.battingNext = at;
-    this.state.battingNextId = orderedIds[at] || null;
+    var mine = this.canMoveBatting(gameId);
+    if (mine) {
+      this.state.battingGameId = gameId;
+      this.state.battingNext = at;
+      this.state.battingNextId = orderedIds[at] || null;
+    }
     this.queue({
       op: 'slots', gameId: gameId, ids: orderedIds.slice(), next: at,
-      nextId: this.state.battingNextId,
+      // Computed independently — reading state.battingNextId here could carry
+      // the LIVE game's batter into another game's op.
+      nextId: orderedIds[at] || null,
+      pointer: mine,
       // Everyone else gets their slot cleared, so a kid who was out when the
       // order was set doesn't reappear at a stale position later.
       all: this.state.players.map(function (p) { return p.id; })
     });
     this.persist();
+    return mine;
   };
 
   /* At-bats per game attended. Rate, not total, so a kid who missed games
@@ -238,6 +288,26 @@
      Tapping "next batter" means "that one hit". A kid who refuses to bat must
      NOT be charged for it — that would push them down next game's order when
      they are in fact still owed. */
+  /* Turning the catcher off drops C out of positions(), which hides the row but
+     leaves any assignment sitting in it: no screen shows it, no button can
+     reach it, and ledger() still pays that kid an infield AND a premium inning
+     for a spot they never played. Vacate it exactly the way a kid going out
+     does — only innings STILL TO COME. A C in an inning already marked played
+     is real history and stays. */
+  LocalStore.prototype.clearCatcher = function (gameId) {
+    var g = this.state.assignments[gameId] || {};
+    var played = this.state.actuals[gameId] || {};
+    var self = this;
+    Object.keys(g).forEach(function (inn) {
+      if (played[inn] || !g[inn].C) return;
+      g[inn].C = null;
+      // Number(): assignment keys are strings, but the column is an int.
+      self.queue({ op: 'assign', gameId: gameId, inning: Number(inn),
+                   position: 'C', playerId: null });
+    });
+    this.persist();
+  };
+
   /* Who is willing to catch AND owns gear. Previously only settable by hand in
      the database, which meant the 11-player setup was unreachable from the app. */
   LocalStore.prototype.setCanCatch = function (playerId, value) {
@@ -249,12 +319,14 @@
   };
 
   LocalStore.prototype.skipBatter = function (gameId, nextId, nextIndex) {
+    if (!this.canMoveBatting(gameId)) return false;
     this.state.battingGameId = gameId;
     this.state.battingNextId = nextId || null;
     this.state.battingNext = nextIndex || 0;
     this.queue({ op: 'skip', gameId: gameId, next: this.state.battingNext,
                  nextId: this.state.battingNextId });
     this.persist();
+    return true;
   };
 
   LocalStore.prototype.queue = function (op) {
