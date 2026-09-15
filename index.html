@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0B0A09">
+<title>Fire Tigers Dugout</title>
+<link rel="icon" href="logo.png">
+<link rel="apple-touch-icon" href="logo.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>html,body{margin:0;padding:0}img{max-width:100%}[hidden]{display:none!important}
+:root{color-scheme:light dark}</style>
+<link rel="stylesheet" href="app/app.css?v=20260914173933">
+</head>
+<body>
+
+<!-- ---------------------------------------------------------------- gate -->
+<div id="gate" class="gate" hidden>
+  <img src="logo.png" alt="Fire Tigers">
+  <h1>Fire Tigers Dugout</h1>
+  <p id="gateIntro">Coaches only. Enter your email and we&rsquo;ll send you a link &mdash;
+    no password to remember.</p>
+  <form id="gateForm">
+    <input id="gateEmail" type="email" inputmode="email" autocomplete="email"
+           placeholder="you@example.com" required>
+    <button type="submit" id="gateBtn">Send me a link</button>
+  </form>
+  <div class="msg" id="gateMsg"></div>
+</div>
+
+<!-- ----------------------------------------------------------------- app -->
+<div id="app" class="shell" hidden>
+  <header class="gamebar">
+    <div class="gb-top">
+      <img class="gb-logo" src="logo.png" alt="">
+      <div class="gb-id">
+        <div class="gb-team">Fire Tigers &middot; WGLL Single A</div>
+        <h1 class="gb-opp" id="gbOpp">&nbsp;</h1>
+        <div class="gb-meta" id="gbMeta"></div>
+      </div>
+      <div class="gb-clock">
+        <div class="gb-time" id="gbTime">&mdash;<span id="gbLimit"></span></div>
+        <div class="gb-flag" id="gbFlag"></div>
+      </div>
+    </div>
+    <div class="gb-bar"><i id="gbBar" style="width:0"></i></div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="false" data-view="roll">Roll</button>
+    <button role="tab" aria-selected="true"  data-view="dugout">Dugout</button>
+    <button role="tab" aria-selected="false" data-view="plan">Plan</button>
+    <button role="tab" aria-selected="false" data-view="ledger">Ledger</button>
+  </nav>
+
+  <main>
+    <!-- roll call -->
+    <section id="v-roll" hidden>
+      <div class="eyebrow">Game <b id="syncRoll" class="sync"></b></div>
+      <div class="sp-s"></div>
+      <select class="gamepick" id="gamePick"></select>
+      <div class="sp"></div>
+      <div class="eyebrow">Who&rsquo;s here <b id="rollCount"></b></div>
+      <div class="sp-s"></div>
+      <div class="panel list rollcall" id="rollList"></div>
+      <div class="sp"></div>
+      <div class="note">Tap <b>Out</b> the moment a kid leaves. Their spot opens in every
+        inning still to come and they drop out of the batting order, on all three
+        phones at once.</div>
+
+      <div class="sp"></div>
+      <div class="eyebrow">Batting order <b id="orderMeta"></b></div>
+      <div class="sp-s"></div>
+      <div class="panel list ordered" id="orderList"></div>
+      <div class="bar-actions">
+        <button class="btn primary" id="setOrder">Set batting order</button>
+      </div>
+      <div class="sp"></div>
+      <div class="note"><span id="orderWhy"></span><br><br>Set it once after roll call and
+        it <b>locks for the game</b>, so it can&rsquo;t reshuffle mid-inning. Kids who turn
+        up late bat at the back.</div>
+    </section>
+
+    <!-- dugout -->
+    <section id="v-dugout">
+      <div class="atbat">
+        <div class="ab-slot" id="abSlot">&nbsp;</div>
+        <div class="ab-name" id="abName">&nbsp;</div>
+        <div class="ab-next">
+          <div class="ab-row"><span>On deck</span><b id="abDeck"></b></div>
+          <div class="ab-row"><span>In the hole</span><b id="abHole"></b></div>
+        </div>
+        <div class="ab-btns">
+          <button class="ab-go" id="abGo">Batted &mdash; next</button>
+          <button class="ab-skip" id="abSkip">Skip</button>
+        </div>
+      </div>
+
+      <div class="sp"></div>
+      <div class="innings" id="innTabs"></div>
+
+      <div class="sp"></div>
+      <div class="toggle">
+        <span>Catcher today</span>
+        <div class="seg">
+          <button id="cYes" aria-pressed="false">Yes</button>
+          <button id="cNo" aria-pressed="true">No</button>
+        </div>
+        <em id="cHint"></em>
+      </div>
+
+      <div class="sp"></div>
+      <div class="eyebrow">In the field <b id="fieldCount"></b></div>
+      <div class="sp-s"></div>
+      <div class="panel list" id="fieldList"></div>
+
+      <div class="sp"></div>
+      <div class="eyebrow">Bench <b id="benchCount"></b></div>
+      <div class="sp-s"></div>
+      <div class="panel list" id="benchList"></div>
+
+      <div class="bar-actions">
+        <button class="btn primary" id="startGame">Start game</button>
+        <button class="btn" id="inningDone">Inning played</button>
+      </div>
+    </section>
+
+    <!-- plan -->
+    <section id="v-plan" hidden>
+      <div class="eyebrow">Pre-plan <b>Tap a cell to change</b></div>
+      <div class="sp-s"></div>
+      <div class="gridwrap"><table id="planTable"></table></div>
+      <div class="sp-s"></div>
+      <div class="warn" id="planWarn"></div>
+      <div class="bar-actions">
+        <button class="btn primary" id="autoFill">Auto-fill from ledger</button>
+        <button class="btn" id="clearPlan">Clear</button>
+      </div>
+      <div class="sp"></div>
+      <div class="note">Auto-fill reads the season ledger and spends innings on whoever is
+        owed most &mdash; front-loaded into innings 1&ndash;3, because the clock usually
+        eats the rest. Change anything you like afterwards; it is a suggestion, not a rule.</div>
+    </section>
+
+    <!-- ledger -->
+    <section id="v-ledger" hidden>
+      <div class="eyebrow">Season so far <b id="ledMeta"></b></div>
+      <div class="sp-s"></div>
+      <div class="key">
+        <span><i class="b-if"></i>Infield</span>
+        <span><i class="b-of"></i>Outfield</span>
+        <span><i style="background:var(--line)"></i>Bench</span>
+        <span style="margin-left:auto">AB</span>
+      </div>
+      <div class="sp-s"></div>
+      <div class="panel led" id="ledList"></div>
+      <div class="sp"></div>
+      <div class="note">Counts only innings marked played, so a game the clock cut short
+        never inflates anyone&rsquo;s totals. Sorted by who is owed the most.</div>
+    </section>
+  </main>
+
+  <p class="who" id="whoami"></p>
+</div>
+
+<div class="sheet" id="sheet"><div class="sheet-in">
+  <div class="sheet-h" id="sheetH"></div>
+  <div id="sheetBody"></div>
+</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="app/config.js?v=20260914173933"></script>
+<script src="app/lineup-engine.js?v=20260914173933"></script>
+<script src="app/store.js?v=20260914173933"></script>
+<script src="app/supabase-store.js?v=20260914173933"></script>
+<script src="app/app.js?v=20260914173933"></script>
+</body>
+</html>

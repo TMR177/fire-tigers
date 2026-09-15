@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0B0A09">
+<title>Fire Tigers Lineup</title>
+<link rel="icon" href="logo.png">
+<link rel="apple-touch-icon" href="logo.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>html,body{margin:0;padding:0}img{max-width:100%}[hidden]{display:none!important}
+:root{color-scheme:light dark}</style>
+<link rel="stylesheet" href="app/app.css?v=20260914173933">
+<style>
+.ordered{counter-reset:bat}
+.ordered .row{gap:12px}
+.slot{font-family:Oswald,"Arial Narrow",sans-serif;font-size:13px;font-weight:600;
+  color:var(--ink-3);width:22px;flex:none;text-align:right;font-variant-numeric:tabular-nums}
+.inn{border-top:1px solid var(--line)}
+.inn:first-child{border-top:0}
+.innhead{font-family:Oswald,"Arial Narrow",sans-serif;font-size:11.5px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2);
+  padding:13px 12px;cursor:pointer;list-style:none;display:flex;
+  align-items:center;justify-content:space-between}
+.innhead::-webkit-details-marker{display:none}
+.innhead::after{content:"＋";font-size:14px;color:var(--ink-3);letter-spacing:0}
+.inn[open] .innhead{color:var(--ink);border-bottom:1px solid var(--line)}
+.inn[open] .innhead::after{content:"−"}
+.inn[open] .innhead{background:var(--accent-soft)}
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <header class="gamebar">
+    <div class="gb-top">
+      <img class="gb-logo" src="logo.png" alt="">
+      <div class="gb-id">
+        <div class="gb-team">Fire Tigers &middot; WGLL Single A</div>
+        <h1 class="gb-opp" id="opp">Loading…</h1>
+        <div class="gb-meta" id="meta"></div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div id="body"></div>
+  </main>
+
+  <p class="foot">Family view &mdash; read only.<br>Updates itself every 30 seconds.</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="app/config.js?v=20260914173933"></script>
+<script>
+(function () {
+  'use strict';
+  // The token lives in the URL fragment, which browsers do not send to servers
+  // and which stays out of referrer headers. It is the whole credential, so the
+  // page asks for nothing else and can write nothing.
+  var token = (location.hash || '').replace(/^#/, '').trim();
+  var $ = function (s) { return document.querySelector(s); };
+  function el(t, c, x) {
+    var n = document.createElement(t);
+    if (c) n.className = c;
+    if (x != null) n.textContent = x;
+    return n;
+  }
+
+  function fail(msg) {
+    $('#opp').textContent = 'Fire Tigers';
+    $('#meta').textContent = '';
+    $('#body').innerHTML = '';
+    $('#body').appendChild(el('div', 'empty', msg));
+  }
+
+  if (!token) {
+    fail('This link is missing its code. Ask Coach Ty to re-send the full link.');
+    return;
+  }
+
+  var sb = window.supabase.createClient(
+    window.FT_CONFIG.supabaseUrl, window.FT_CONFIG.publishableKey,
+    { auth: { persistSession: false } });
+
+  // Which innings the reader has opened themselves. Null until they touch one,
+  // so the 30-second refresh doesn't keep folding away what they just opened.
+  var userOpened = null;
+  var IF = { P: 1, C: 1, '1B': 1, '2B': 1, '3B': 1, SS: 1 };
+  var ORDER = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'LCF', 'CF', 'RCF', 'RF'];
+
+  function load() {
+  return sb.rpc('shared_lineup', { p_token: token }).then(function (r) {
+    if (r.error) { fail('Could not load the lineup. Try again in a moment.'); return; }
+    var d = r.data;
+    if (!d) {
+      fail('This link is no longer active. Ask Coach Ty for the current one.');
+      return;
+    }
+
+    var g = d.game;
+    var when = new Date(g.starts_at);
+    $('#opp').textContent = (g.home_away === 'away' ? '@ ' : 'vs. ') + (g.opponent || '');
+    $('#meta').textContent = when.toLocaleDateString(undefined,
+      { weekday: 'short', month: 'short', day: 'numeric' }) + ' · ' +
+      when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) +
+      (g.status === 'live' ? ' · in progress' : '');
+
+    var body = $('#body');
+    body.innerHTML = '';
+
+    // Batting order
+    if (d.batting && d.batting.length) {
+      body.appendChild(el('div', 'eyebrow', 'Batting order'));
+      body.appendChild(el('div', 'sp-s'));
+      var bl = el('div', 'panel list ordered');
+      d.batting.forEach(function (n, i) {
+        var r = el('div', 'row');
+        r.appendChild(el('span', 'slot', String(i + 1)));
+        r.appendChild(el('span', 'nm', n));
+        bl.appendChild(r);
+      });
+      body.appendChild(bl);
+      body.appendChild(el('div', 'sp'));
+    }
+
+    // Positions by inning
+    if (d.lineup && d.lineup.length) {
+      body.appendChild(el('div', 'eyebrow', 'Positions'));
+      body.appendChild(el('div', 'sp-s'));
+      var byInn = {};
+      d.lineup.forEach(function (a) {
+        (byInn[a.inning] = byInn[a.inning] || []).push(a);
+      });
+      // Five innings of ten positions is fifty rows to scroll past for "where
+      // is my kid right now". Open the inning being played, fold the rest away.
+      var innings = Object.keys(byInn).sort(function (a, b) { return a - b; });
+      var current = g.status === 'live' ? (g.innings_played || 0) + 1 : 1;
+      if (innings.indexOf(String(current)) < 0) {
+        current = Number(innings[innings.length - 1]);
+      }
+      var panel = el('div', 'panel list');
+      innings.forEach(function (inn) {
+        var box = document.createElement('details');
+        box.className = 'inn';
+        box.open = userOpened ? !!userOpened[inn] : (Number(inn) === current);
+        box.addEventListener('toggle', function () {
+          if (!userOpened) {
+            userOpened = {};
+            innings.forEach(function (x) { userOpened[x] = (Number(x) === current); });
+          }
+          userOpened[inn] = box.open;
+        });
+        var head = document.createElement('summary');
+        head.className = 'innhead';
+        head.textContent = 'Inning ' + inn +
+          (Number(inn) === current ? ' · on now' : '');
+        box.appendChild(head);
+        byInn[inn].sort(function (a, b) {
+          return ORDER.indexOf(a.position) - ORDER.indexOf(b.position);
+        }).forEach(function (a) {
+          var r = el('div', 'row');
+          r.appendChild(el('span', 'chip ' +
+            (a.position === 'C' ? 'c' : (IF[a.position] ? 'if' : 'of')), a.position));
+          r.appendChild(el('span', 'nm', a.player));
+          box.appendChild(r);
+        });
+        panel.appendChild(box);
+      });
+      body.appendChild(panel);
+    } else {
+      body.appendChild(el('div', 'empty',
+        'The lineup for this game is not posted yet. Check back closer to game time.'));
+    }
+  }).catch(function () {
+    fail('Could not load the lineup. Check your signal and try again.');
+  });
+  }
+
+  load();
+  // Parents watching from the bleachers should not have to pull-to-refresh
+  // every half inning. Poll while the tab is actually in front.
+  setInterval(function () {
+    if (document.visibilityState === 'visible') load();
+  }, 30000);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') load();
+  });
+}());
+</script>
+</body>
+</html>
