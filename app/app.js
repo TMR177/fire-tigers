@@ -194,9 +194,22 @@
     return E.battingOrderByNeed(S().players, present, store.battingStats(gameId));
   }
 
-  function batIndex(len) {
+  /* Find the batter by WHO they are, not by counting to a position. The order
+     closes up when a kid leaves, so a stored position silently starts pointing
+     at a different child — skipping whoever was actually due. */
+  function batIndex(order) {
+    if (!order || !order.length) return 0;
     if (S().battingGameId !== gameId) return 0;
-    return len ? (S().battingNext % len) : 0;
+    var id = S().battingNextId;
+    if (id) {
+      for (var i = 0; i < order.length; i++) {
+        if (order[i].id === id) return i;
+      }
+      // Not found: the kid who was up is the one who left. Whoever followed
+      // them has moved into that slot, so the stored position is now correct.
+    }
+    var idx = S().battingNext || 0;
+    return idx >= order.length ? 0 : idx;
   }
 
   function renderBat() {
@@ -207,7 +220,7 @@
       $('#abDeck').textContent = ''; $('#abHole').textContent = '';
       return;
     }
-    var i = batIndex(o.length);
+    var i = batIndex(o);
     $('#abSlot').textContent = 'Batter ' + (i + 1) + ' of ' + o.length + ' · At bat';
     $('#abName').textContent = o[i].name;
     $('#abDeck').textContent = o[(i + 1) % o.length].name;
@@ -217,24 +230,26 @@
   $('#abGo').onclick = function () {
     var o = order();
     if (!o.length) return;
-    var i = batIndex(o.length);
+    var i = batIndex(o);
     // If nobody set the order, freeze it on the first tap — keeping whoever is
     // up right now. An unfrozen order drifts apart between phones.
     if (!Object.keys((S().battingSlots || {})[gameId] || {}).length) {
       store.setBattingSlots(gameId, o.map(function (p) { return p.id; }), i);
     }
-    store.advanceBatter(gameId, o[i].id, o.length);
+    var n = (i + 1) % o.length;
+    store.advanceBatter(gameId, o[i].id, o[n].id, n);
   };
 
   /* Same movement through the order, no at-bat recorded. */
   $('#abSkip').onclick = function () {
     var o = order();
     if (!o.length) return;
-    var i = batIndex(o.length);
+    var i = batIndex(o);
     if (!Object.keys((S().battingSlots || {})[gameId] || {}).length) {
       store.setBattingSlots(gameId, o.map(function (p) { return p.id; }), i);
     }
-    store.skipBatter(gameId, o.length);
+    var n = (i + 1) % o.length;
+    store.skipBatter(gameId, o[n].id, n);
   };
 
   $('#setOrder').onclick = function () {

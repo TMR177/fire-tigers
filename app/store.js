@@ -31,7 +31,12 @@
       attendance: {},   // gameId -> playerId -> 'present'|'absent'|'out'
       assignments: {},  // gameId -> inning -> position -> playerId|null
       actuals: {},      // gameId -> inning -> true once played
-      battingNext: 0,   // index into TODAY'S order, not a season pointer
+      // WHO is up, not which position. A position number silently pointed at a
+      // different child as soon as anyone ahead of them left and the order
+      // closed up. battingNext is kept only as a fallback for the one case the
+      // id cannot cover: the kid who was up is the one who left.
+      battingNextId: null,
+      battingNext: 0,
       battingGameId: null,
       battingSlots: {}, // gameId -> [playerId] frozen order for that game
       plateAppearances: {}, // gameId -> playerId -> n
@@ -165,15 +170,16 @@
     this.persist();
   };
 
-  LocalStore.prototype.advanceBatter = function (gameId, playerId, orderLen) {
+  LocalStore.prototype.advanceBatter = function (gameId, playerId, nextId, nextIndex) {
     var pa = this.state.plateAppearances;
     pa[gameId] = pa[gameId] || {};
     pa[gameId][playerId] = (pa[gameId][playerId] || 0) + 1;
-    var n = Math.max(orderLen || this.state.players.length, 1);
     this.state.battingGameId = gameId;
-    this.state.battingNext = (this.state.battingNext + 1) % n;
+    this.state.battingNextId = nextId || null;
+    this.state.battingNext = nextIndex || 0;
     this.queue({ op: 'bat', gameId: gameId, playerId: playerId,
-                 pa: pa[gameId][playerId], next: this.state.battingNext });
+                 pa: pa[gameId][playerId], next: this.state.battingNext,
+                 nextId: this.state.battingNextId });
     this.persist();
   };
 
@@ -189,8 +195,10 @@
     this.state.battingSlots[gameId] = map;
     this.state.battingGameId = gameId;
     this.state.battingNext = at;
+    this.state.battingNextId = orderedIds[at] || null;
     this.queue({
       op: 'slots', gameId: gameId, ids: orderedIds.slice(), next: at,
+      nextId: this.state.battingNextId,
       // Everyone else gets their slot cleared, so a kid who was out when the
       // order was set doesn't reappear at a stale position later.
       all: this.state.players.map(function (p) { return p.id; })
@@ -240,11 +248,12 @@
     this.persist();
   };
 
-  LocalStore.prototype.skipBatter = function (gameId, orderLen) {
-    var n = Math.max(orderLen || this.state.players.length, 1);
+  LocalStore.prototype.skipBatter = function (gameId, nextId, nextIndex) {
     this.state.battingGameId = gameId;
-    this.state.battingNext = (this.state.battingNext + 1) % n;
-    this.queue({ op: 'skip', gameId: gameId, next: this.state.battingNext });
+    this.state.battingNextId = nextId || null;
+    this.state.battingNext = nextIndex || 0;
+    this.queue({ op: 'skip', gameId: gameId, next: this.state.battingNext,
+                 nextId: this.state.battingNextId });
     this.persist();
   };
 

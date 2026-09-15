@@ -195,11 +195,12 @@
       });
       var nextIdx = (res[2].data && res[2].data.next_index) || 0;
       var nextGame = (res[2].data && res[2].data.game_id) || null;
+      var nextWho = (res[2].data && res[2].data.next_player_id) || null;
 
       var ids = games.map(function (g) { return g.id; });
       if (!ids.length) {
         S.players = players; S.games = games;
-        S.battingNext = nextIdx; S.battingGameId = nextGame;
+        S.battingNext = nextIdx; S.battingGameId = nextGame; S.battingNextId = nextWho;
         self.persist();
         return;
       }
@@ -233,7 +234,7 @@
         });
 
         S.players = players; S.games = games;
-        S.battingNext = nextIdx; S.battingGameId = nextGame;
+        S.battingNext = nextIdx; S.battingGameId = nextGame; S.battingNextId = nextWho;
         S.assignments = assignments; S.actuals = actuals;
         S.attendance = attendance; S.plateAppearances = plateAppearances;
         S.battingSlots = battingSlots;
@@ -289,6 +290,7 @@
         function (p) {
           var r = p.new; if (!r) return;
           S.battingNext = r.next_index || 0;
+          S.battingNextId = r.next_player_id || null;
           S.battingGameId = r.game_id || null;
           self.persist();
         })
@@ -349,7 +351,7 @@
           plate_appearances: op.pa
         }, { onConflict: 'game_id,player_id' }),
         this.sb.from('batting_state').upsert({
-          team_id: this.cfg.teamId, next_index: op.next, game_id: op.gameId,
+          team_id: this.cfg.teamId, next_index: op.next, next_player_id: op.nextId || null, game_id: op.gameId,
           updated_at: new Date().toISOString()
         }, { onConflict: 'team_id' })
       ]);
@@ -363,7 +365,7 @@
           }), { onConflict: 'game_id,player_id' }),
         // Setting the order restarts the rotation — push that to everyone too.
         this.sb.from('batting_state').upsert({
-          team_id: this.cfg.teamId, next_index: op.next || 0, game_id: op.gameId,
+          team_id: this.cfg.teamId, next_index: op.next || 0, next_player_id: op.nextId || null, game_id: op.gameId,
           updated_at: new Date().toISOString()
         }, { onConflict: 'team_id' })
       ]);
@@ -371,7 +373,7 @@
       q = this.sb.from('players').update({ can_catch: op.value }).eq('id', op.playerId);
     } else if (op.op === 'skip') {
       q = this.sb.from('batting_state').upsert({
-        team_id: this.cfg.teamId, next_index: op.next, game_id: op.gameId,
+        team_id: this.cfg.teamId, next_index: op.next, next_player_id: op.nextId || null, game_id: op.gameId,
         updated_at: new Date().toISOString()
       }, { onConflict: 'team_id' });
     } else if (op.op === 'game') {
