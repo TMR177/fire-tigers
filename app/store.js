@@ -217,8 +217,11 @@
     this.state.battingGameId = gameId;
     this.state.battingNextId = nextId || null;
     this.state.battingNext = nextIndex || 0;
-    this.queue({ op: 'bat', gameId: gameId, playerId: playerId,
-                 pa: pa[gameId][playerId], next: this.state.battingNext,
+    // delta, not the absolute total. An op queued offline used to carry this
+    // phone's count, so replaying it after another phone had moved on rewound
+    // the at-bats. A delta composes however late it arrives.
+    this.queue({ op: 'bat', gameId: gameId, playerId: playerId, delta: 1,
+                 next: this.state.battingNext,
                  nextId: this.state.battingNextId });
     this.persist();
     return true;

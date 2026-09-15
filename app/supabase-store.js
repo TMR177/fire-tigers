@@ -334,7 +334,7 @@
     if (op.op === 'assign') {
       q = this.sb.from('assignments').upsert({
         game_id: op.gameId, inning: op.inning, position: op.position,
-        player_id: op.playerId, updated_at: new Date().toISOString(),
+        player_id: op.playerId, updated_at: op.at || new Date().toISOString(),
         updated_by: this.session && this.session.user.id
       }, { onConflict: 'game_id,inning,position' });
     } else if (op.op === 'attendance') {
@@ -346,13 +346,15 @@
             .eq('game_id', op.gameId).eq('inning', op.inning);
     } else if (op.op === 'bat') {
       q = Promise.all([
-        this.sb.from('game_players').upsert({
-          game_id: op.gameId, player_id: op.playerId,
-          plate_appearances: op.pa
-        }, { onConflict: 'game_id,player_id' }),
+        // Increment server-side so a late-draining op adds to whatever is there
+        // rather than overwriting it with this phone's stale total.
+        this.sb.rpc('bump_plate_appearance', {
+          p_game: op.gameId, p_player: op.playerId,
+          p_delta: op.delta != null ? op.delta : 1
+        }),
         this.sb.from('batting_state').upsert({
           team_id: this.cfg.teamId, next_index: op.next, next_player_id: op.nextId || null, game_id: op.gameId,
-          updated_at: new Date().toISOString()
+          updated_at: op.at || new Date().toISOString()
         }, { onConflict: 'team_id' })
       ]);
     } else if (op.op === 'slots') {
@@ -370,7 +372,7 @@
         writes.push(this.sb.from('batting_state').upsert({
           team_id: this.cfg.teamId, next_index: op.next || 0,
           next_player_id: op.nextId || null, game_id: op.gameId,
-          updated_at: new Date().toISOString()
+          updated_at: op.at || new Date().toISOString()
         }, { onConflict: 'team_id' }));
       }
       q = Promise.all(writes);
@@ -379,7 +381,7 @@
     } else if (op.op === 'skip') {
       q = this.sb.from('batting_state').upsert({
         team_id: this.cfg.teamId, next_index: op.next, next_player_id: op.nextId || null, game_id: op.gameId,
-        updated_at: new Date().toISOString()
+        updated_at: op.at || new Date().toISOString()
       }, { onConflict: 'team_id' });
     } else if (op.op === 'game') {
       q = this.sb.from('games').update(op.patch).eq('id', op.gameId);

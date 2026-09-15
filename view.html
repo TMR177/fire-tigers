@@ -15,7 +15,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>html,body{margin:0;padding:0}img{max-width:100%}[hidden]{display:none!important}
 :root{color-scheme:light dark}</style>
-<link rel="stylesheet" href="app/app.css?v=20260914190614">
+<link rel="stylesheet" href="app/app.css?v=20260914191716">
 <style>
 .ordered{counter-reset:bat}
 .ordered .row{gap:12px}
@@ -32,6 +32,10 @@
 .inn[open] .innhead{color:var(--ink);border-bottom:1px solid var(--line)}
 .inn[open] .innhead::after{content:"−"}
 .inn[open] .innhead{background:var(--accent-soft)}
+.inn.planned .innhead{color:var(--ink-3)}
+.stat{font-size:11.5px;color:var(--ink-3);text-align:center;padding:10px 16px 0;
+  line-height:1.5;margin:0}
+.stat.warn{color:var(--warn)}
 </style>
 </head>
 <body>
@@ -52,11 +56,12 @@
     <div id="body"></div>
   </main>
 
+  <p class="stat" id="stat"></p>
   <p class="foot">Family view &mdash; read only.<br>Updates itself every 30 seconds.</p>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-<script src="app/config.js?v=20260914190614"></script>
+<script src="app/config.js?v=20260914191716"></script>
 <script>
 (function () {
   'use strict';
@@ -72,15 +77,20 @@
     return n;
   }
 
-  function fail(msg) {
+  function hardFail(msg) {
     $('#opp').textContent = 'Fire Tigers';
     $('#meta').textContent = '';
     $('#body').innerHTML = '';
     $('#body').appendChild(el('div', 'empty', msg));
+    $('#stat').textContent = '';
   }
 
   if (!token) {
-    fail('This link is missing its code. Ask Coach Ty to re-send the full link.');
+    hardFail('This link is missing its code. Ask Coach Ty to re-send the full link.');
+    return;
+  }
+  if (!window.supabase || !window.supabase.createClient || !window.FT_CONFIG) {
+    hardFail('Could not load the page properly. Check your signal and reload.');
     return;
   }
 
@@ -88,33 +98,50 @@
     window.FT_CONFIG.supabaseUrl, window.FT_CONFIG.publishableKey,
     { auth: { persistSession: false } });
 
-  // Which innings the reader has opened themselves. Null until they touch one,
-  // so the 30-second refresh doesn't keep folding away what they just opened.
-  var userOpened = null;
+  // Which innings the reader opened themselves. Null until they genuinely touch
+  // one — a programmatic `open` also fires `toggle` (the spec queues it as a
+  // task), which used to populate this on the first render and stop the current
+  // inning auto-following for the rest of the game.
+  var userOpened = null, suppressToggle = false;
+  var haveRendered = false;          // has a good payload ever reached the DOM
+  var lastLoadedAt = null;
+  var inFlight = 0;                  // drop a slow reply a newer one already beat
+
   var IF = { P: 1, C: 1, '1B': 1, '2B': 1, '3B': 1, SS: 1 };
   var ORDER = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'LCF', 'CF', 'RCF', 'RF'];
 
-  function load() {
-  return sb.rpc('shared_lineup', { p_token: token }).then(function (r) {
-    if (r.error) { fail('Could not load the lineup. Try again in a moment.'); return; }
-    var d = r.data;
-    if (!d) {
-      fail('This link is no longer active. Ask Coach Ty for the current one.');
+  function clockLabel(d) {
+    return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
+
+  /* A failed refresh must not destroy a good screen. Everything else in this app
+     survives a dead signal; this page used to blank itself the moment the
+     network blinked. */
+  function softFail() {
+    if (!haveRendered) {
+      hardFail('Could not load the lineup. Check your signal and try again.');
       return;
     }
+    var s = $('#stat');
+    s.className = 'stat warn';
+    s.textContent = 'Showing the lineup from ' + clockLabel(lastLoadedAt) +
+      ' — could not reach the server just now, still trying.';
+  }
 
+  function render(d) {
     var g = d.game;
     var when = new Date(g.starts_at);
+    var played = g.innings_played || 0;
+    var live = g.status === 'live';
+
     $('#opp').textContent = (g.home_away === 'away' ? '@ ' : 'vs. ') + (g.opponent || '');
     $('#meta').textContent = when.toLocaleDateString(undefined,
-      { weekday: 'short', month: 'short', day: 'numeric' }) + ' · ' +
-      when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) +
-      (g.status === 'live' ? ' · in progress' : '');
+      { weekday: 'short', month: 'short', day: 'numeric' }) + ' · ' + clockLabel(when) +
+      (live ? ' · in progress' : (g.status === 'final' ? ' · final' : ''));
 
     var body = $('#body');
     body.innerHTML = '';
 
-    // Batting order
     if (d.batting && d.batting.length) {
       body.appendChild(el('div', 'eyebrow', 'Batting order'));
       body.appendChild(el('div', 'sp-s'));
@@ -126,40 +153,59 @@
         bl.appendChild(r);
       });
       body.appendChild(bl);
+      if (!d.order_set) {
+        body.appendChild(el('p', 'stat', 'Not set yet — this is roster order.'));
+      }
       body.appendChild(el('div', 'sp'));
     }
 
-    // Positions by inning
     if (d.lineup && d.lineup.length) {
       body.appendChild(el('div', 'eyebrow', 'Positions'));
       body.appendChild(el('div', 'sp-s'));
+
       var byInn = {};
       d.lineup.forEach(function (a) {
         (byInn[a.inning] = byInn[a.inning] || []).push(a);
       });
-      // Five innings of ten positions is fifty rows to scroll past for "where
-      // is my kid right now". Open the inning being played, fold the rest away.
       var innings = Object.keys(byInn).sort(function (a, b) { return a - b; });
-      var current = g.status === 'live' ? (g.innings_played || 0) + 1 : 1;
-      if (innings.indexOf(String(current)) < 0) {
-        current = Number(innings[innings.length - 1]);
+
+      function wasPlayed(inn) {
+        return byInn[inn].some(function (a) { return a.actual; });
       }
+
+      // "On now" is the first inning NOT yet marked played, and only while the
+      // game is live. Trusting innings_played + 1 alone pointed at a planned
+      // inning that would never happen once the game ended.
+      var current = null;
+      if (live) {
+        for (var k = 0; k < innings.length; k++) {
+          if (!wasPlayed(innings[k])) { current = innings[k]; break; }
+        }
+        if (current === null && innings.indexOf(String(played + 1)) > -1) {
+          current = String(played + 1);
+        }
+      }
+
       var panel = el('div', 'panel list');
+      suppressToggle = true;
       innings.forEach(function (inn) {
+        var isNow = inn === current;
+        var done = wasPlayed(inn);
         var box = document.createElement('details');
-        box.className = 'inn';
-        box.open = userOpened ? !!userOpened[inn] : (Number(inn) === current);
+        box.className = 'inn' + (!done && !isNow ? ' planned' : '');
+        box.open = userOpened ? !!userOpened[inn] : isNow;
         box.addEventListener('toggle', function () {
+          if (suppressToggle) return;          // programmatic, not the reader
           if (!userOpened) {
             userOpened = {};
-            innings.forEach(function (x) { userOpened[x] = (Number(x) === current); });
+            innings.forEach(function (x) { userOpened[x] = (x === current); });
           }
           userOpened[inn] = box.open;
         });
         var head = document.createElement('summary');
         head.className = 'innhead';
         head.textContent = 'Inning ' + inn +
-          (Number(inn) === current ? ' · on now' : '');
+          (isNow ? ' · on now' : (done ? ' · played' : ' · planned'));
         box.appendChild(head);
         byInn[inn].sort(function (a, b) {
           return ORDER.indexOf(a.position) - ORDER.indexOf(b.position);
@@ -172,19 +218,55 @@
         });
         panel.appendChild(box);
       });
+      // toggle is queued as a task, so clear the guard in a task too.
+      setTimeout(function () { suppressToggle = false; }, 0);
       body.appendChild(panel);
     } else {
       body.appendChild(el('div', 'empty',
         'The lineup for this game is not posted yet. Check back closer to game time.'));
     }
-  }).catch(function () {
-    fail('Could not load the lineup. Check your signal and try again.');
-  });
+
+    haveRendered = true;
+    lastLoadedAt = new Date();
+    var s = $('#stat');
+    s.className = 'stat';
+    s.textContent = 'Updated ' + clockLabel(lastLoadedAt);
+  }
+
+  function load() {
+    var seq = ++inFlight;
+    return sb.rpc('shared_lineup', { p_token: token }).then(function (r) {
+      if (seq !== inFlight) return;          // a newer refresh already answered
+      if (r.error) { softFail(); return; }
+
+      var d = r.data;
+      if (!d) {
+        hardFail('This link is no longer active. Ask Coach Ty for the current one.');
+        return;
+      }
+      if (!d.game) {
+        // A working link with nothing scheduled is NOT a dead link. Saying so
+        // used to send parents to Ty asking for a replacement.
+        $('#opp').textContent = 'No game posted right now';
+        $('#meta').textContent = '';
+        $('#body').innerHTML = '';
+        $('#body').appendChild(el('div', 'empty',
+          'Nothing scheduled at the moment. This link keeps working — check back ' +
+          'before the next game.'));
+        $('#stat').textContent = '';
+        haveRendered = false;
+        return;
+      }
+      render(d);
+    }).catch(function () {
+      if (seq !== inFlight) return;
+      softFail();
+    });
   }
 
   load();
-  // Parents watching from the bleachers should not have to pull-to-refresh
-  // every half inning. Poll while the tab is actually in front.
+  // Parents watching from the bleachers should not have to pull-to-refresh every
+  // half inning. Poll while the tab is actually in front.
   setInterval(function () {
     if (document.visibilityState === 'visible') load();
   }, 30000);
