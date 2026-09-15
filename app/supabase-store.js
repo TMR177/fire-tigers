@@ -238,6 +238,8 @@
         S.assignments = assignments; S.actuals = actuals;
         S.attendance = attendance; S.plateAppearances = plateAppearances;
         S.battingSlots = battingSlots;
+        // Put back anything that has not reached the server yet.
+        self.replayPending();
         self.persist();
       });
     });

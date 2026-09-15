@@ -416,12 +416,35 @@
   /* The clock is the thing that decides how many innings you get, so starting it
      is a deliberate tap at first pitch rather than something derived from the
      scheduled time — games never start when the schedule says they do. */
+  /* Ending a game stops the clock and moves every parent's screen on. It sat
+     one unconfirmed tap away from the button you press most in a dugout. Same
+     two-tap rule as marking an inning played, keyed to the game so it cannot
+     stay armed across a switch. */
+  var armedEndFor = null, endTimer = null;
+
   $('#startGame').onclick = function () {
     var g = game();
     if (!g) return;
     if (g.status === 'live') {
+      if (armedEndFor !== gameId) {
+        armedEndFor = gameId;
+        renderGameBtn();
+        clearTimeout(endTimer);
+        endTimer = setTimeout(function () {
+          armedEndFor = null; renderGameBtn();
+        }, 6000);
+        return;
+      }
+      armedEndFor = null;
+      clearTimeout(endTimer);
       store.patchGame(gameId, {
         local: { status: 'final' }, remote: { status: 'final' }
+      });
+    } else if (g.status === 'final') {
+      // And no longer terminal. A mis-tap used to be unrecoverable from inside
+      // the app; reopening is not destructive, so it needs no confirmation.
+      store.patchGame(gameId, {
+        local: { status: 'live' }, remote: { status: 'live' }
       });
     } else {
       var t = new Date().toISOString();
@@ -443,10 +466,12 @@
     var d = $('#inningDone');
     d.textContent = doneLabel();
     d.className = 'btn' + (armedFor === armKey() ? ' primary' : '');
-    b.textContent = g.status === 'live' ? 'End game'
-                  : g.status === 'final' ? 'Game over' : 'Start game';
-    b.className = 'btn' + (g.status === 'scheduled' ? ' primary' : '');
-    b.disabled = g.status === 'final';
+    b.textContent = g.status === 'live'
+      ? (armedEndFor === gameId ? 'End game — tap again' : 'End game')
+      : (g.status === 'final' ? 'Reopen game' : 'Start game');
+    b.className = 'btn' +
+      (g.status === 'scheduled' || armedEndFor === gameId ? ' primary' : '');
+    b.disabled = false;
   }
 
   /* Marking an inning played writes it into the season ledger permanently. If

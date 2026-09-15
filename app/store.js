@@ -345,6 +345,70 @@
     }
   };
 
+  /* Re-apply everything still waiting to reach the server.
+     A refresh replaces every collection wholesale with the server's version,
+     which silently erased the coach's own unsent work from their own screen
+     until the queue happened to drain. The queued ops ARE the record of that
+     work, so replay them on top of the fresh server state. Safe by definition:
+     an op is only pending because the server has not accepted it yet. */
+  LocalStore.prototype.replayPending = function () {
+    var S = this.state;
+    S.pendingOps.forEach(function (op) {
+      if (op.op === 'assign') {
+        S.assignments[op.gameId] = S.assignments[op.gameId] || {};
+        S.assignments[op.gameId][op.inning] =
+          S.assignments[op.gameId][op.inning] || {};
+        S.assignments[op.gameId][op.inning][op.position] = op.playerId || null;
+
+      } else if (op.op === 'attendance') {
+        S.attendance[op.gameId] = S.attendance[op.gameId] || {};
+        S.attendance[op.gameId][op.playerId] = op.status;
+
+      } else if (op.op === 'actual') {
+        S.actuals[op.gameId] = S.actuals[op.gameId] || {};
+        S.actuals[op.gameId][op.inning] = true;
+
+      } else if (op.op === 'bat') {
+        var pa = S.plateAppearances;
+        pa[op.gameId] = pa[op.gameId] || {};
+        pa[op.gameId][op.playerId] =
+          (pa[op.gameId][op.playerId] || 0) + (op.delta || 1);
+        S.battingGameId = op.gameId;
+        S.battingNext = op.next || 0;
+        S.battingNextId = op.nextId || null;
+
+      } else if (op.op === 'skip') {
+        S.battingGameId = op.gameId;
+        S.battingNext = op.next || 0;
+        S.battingNextId = op.nextId || null;
+
+      } else if (op.op === 'slots') {
+        var map = {};
+        (op.ids || []).forEach(function (id, i) { map[id] = i; });
+        S.battingSlots[op.gameId] = map;
+        if (op.pointer !== false) {
+          S.battingGameId = op.gameId;
+          S.battingNext = op.next || 0;
+          S.battingNextId = op.nextId || null;
+        }
+
+      } else if (op.op === 'cancatch') {
+        S.players.forEach(function (p) {
+          if (p.id === op.playerId) p.canCatch = op.value;
+        });
+
+      } else if (op.op === 'game' && op.patch) {
+        S.games.forEach(function (g) {
+          if (g.id !== op.gameId) return;
+          if ('status' in op.patch) g.status = op.patch.status;
+          if ('has_catcher' in op.patch) g.hasCatcher = op.patch.has_catcher;
+          if ('innings_played' in op.patch) g.inningsPlayed = op.patch.innings_played;
+          if ('clock_started_at' in op.patch) g.clockStartedAt = op.patch.clock_started_at;
+        });
+      }
+    });
+  };
+
   /* Season ledger in the shape the planner wants, built only from innings that
      were actually played. Planned-but-never-reached innings must not count, or
      the ledger drifts from reality every time the clock cuts a game short. */
