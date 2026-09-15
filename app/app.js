@@ -322,10 +322,23 @@
 
   function renderField() {
     var L = lineupFor(inning), f = $('#fieldList'), filled = 0;
+
+    /* An inning already played is a record of what happened. The "is this kid
+       still here?" filter exists to surface holes that need FILLING, and there
+       is nothing to fill in an inning that is over — applying it there showed a
+       hole where a kid actually stood, and the bench list (which read the same
+       data WITHOUT the filter) then hid them too, so they appeared nowhere. */
+    var done = inningPlayed(inning);
+    function onFieldId(pos) {
+      var id = L[pos];
+      if (!id) return null;
+      if (!done && attOf(id) !== 'present') return null;
+      return id;
+    }
+
     f.innerHTML = '';
     positions().forEach(function (pos) {
-      var id = L[pos];
-      if (id && attOf(id) !== 'present') id = null;
+      var id = onFieldId(pos);
       var r = el('div', 'row' + (id ? '' : ' hole'));
       r.appendChild(el('span', 'chip ' + chipClass(pos), pos));
       if (id) {
@@ -353,8 +366,13 @@
     });
     $('#fieldCount').textContent = filled + ' on the field';
 
+    // Same rule as the field, so the two lists can never disagree about who
+    // was out there.
     var on = {};
-    positions().forEach(function (p) { if (L[p]) on[L[p]] = 1; });
+    positions().forEach(function (pos) {
+      var id = onFieldId(pos);
+      if (id) on[id] = 1;
+    });
     var bl = $('#benchList');
     bl.innerHTML = '';
     var bench = S().players.filter(function (p) { return !on[p.id]; });
